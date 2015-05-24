@@ -1,0 +1,157 @@
+---
+title: "Practical Machine Learning Project"
+author: "Noah Xiao (https://au.linkedin.com/in/mengnoahxiao)"
+output: 
+    html_document:
+        theme: cosmo
+        highlight: tango
+---
+
+# 1.0 Background  
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).  
+The goal of this project aims to predict the manner in which they did the exercise.  
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.  
+
+
+# 2.0  Machine Learning Process  
+This section aims to describe the steps of loading dataset, data exporatory analysis, data cleaning, feature selection, and model fitting and prediction.  
+
+## 2.1 Loading Dataset  
+First, set up the working directory.  
+```{r}
+# set up a working directory, please do not hack me, please...
+setwd("/Volumes/Data Science/Google Drive/learning_data_science/Coursera/practical_machine_learning/noahhhhhh.github.io/")
+```  
+
+Second, download the datasets.  
+```{r}
+setwd("/Volumes/Data Science/Google Drive/learning_data_science/Coursera/practical_machine_learning/noahhhhhh.github.io/data")
+
+if (!file.exists("testing_raw.csv")){
+    download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "training_raw.csv", method = "curl")
+    }
+
+if (!file.exists("training_raw.csv")){
+    download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "testing_raw.csv", method = "curl")
+    }
+
+setwd("/Volumes/Data Science/Google Drive/learning_data_science/Coursera/practical_machine_learning/noahhhhhh.github.io/")
+
+```  
+
+Third, read the datasets into data frames in R.
+```{r}
+df_training_raw <- read.csv("data/training_raw.csv")
+df_testing_raw <- read.csv("data/testing_raw.csv")
+```  
+
+Fourth, let us do a simple EDA on the data set.
+Before data cleaning and feature selection, there are 19,622 rows and 160 columns in the dataset.  
+```{r}
+# take a snap of the training raw data set
+dim(df_training_raw)
+```  
+Before data cleaning and feature selection, the numebr of observations for each class are distributed as below.  
+```{r}
+table(df_training_raw$classe)
+```
+
+## 2.2 Data Cleaning  
+First, let us see which columns have NAs or blank. Also, in the non-NA and non-blank columns, we only need the Belt, Arm, Dumbbell, and Forearm related features, names and other features are excluded.
+```{r}
+names_feat <- grepl("belt|[^(fore)]arm|dumbbell|forearm", names(df_training_raw))
+df_training_feat <- df_training_raw[, names_feat]
+
+list_NA <- apply(df_training_feat, 2, function(x) {sum(is.na(x) || x == "")})
+df_training <- df_training_feat[, which(list_NA == 0)]
+df_testing <- df_testing_raw[, names(df_training)]
+df_training$classe <- as.factor(df_training_raw$classe)
+```  
+After the clean, there are only 52 predictors left.  
+
+## 2.3 Data Preprocessing  
+This process is preparing data for model training.  
+First, let us standardize the numeric data.  
+```{r}
+library(caret)
+list_num <- which(lapply(df_training, class) %in% "numeric")
+names_num <- names(df_training[, list_num])
+names_not_num <- names(df_training[, -list_num])
+# found classe is in the not num, exclude it from the names_not_num, this is for testing set preprocessing
+names_not_num_classe <- names_not_num[1:25]
+
+pre_train <- preProcess(df_training[, list_num], method=c("center", "scale"))
+df_pre_train <- predict(pre_train, newdata = df_training[, list_num])
+df_pre_train <- cbind(df_pre_train, df_training[, names_not_num])
+
+df_pre_test <- predict(pre_train, newdata = df_testing[, names_num])
+df_pre_test <- cbind(df_pre_test, df_testing[, names_not_num_classe])
+```  
+
+Next, let us remove the columns with 0 or near 0 variance.  
+```{r}
+# found there is no feature with 0 or near 0 variance
+nearZeroVar(df_pre_train, saveMetrics = T)
+```
+Found there is no feature with 0 or near 0 variance, so the pre processed data set is all good for model training.  
+
+## Data Parition  
+Before training the mdoel, the training data set is better to split into a "further" traiing data set and a validation data set (as the testing dat set only have 20 observations, in turn, the training should have way more observations than the validation data set). Cross validation is chosen.  
+```{r}
+set.seed(999)
+inTrain = createDataPartition(df_pre_train$classe, p = .8, list = FALSE)
+df_model_train <- df_pre_train[inTrain, ]
+df_model_valid <- df_pre_train[-inTrain, ]
+```  
+
+## 2.4 Training Model  
+Random Forest is chosen to be the model for this classification problem. The reason behind is partially that there are more than 50 features. The number of features indicates that decision tree is potentially not having a good level of interpretability. Also, theoretically, random forest is more accurate in this kind of scenario.  
+
+First, as there is not harm to use decision tree. Let us take a look at the decision tree model first.  
+```{r}
+set.seed(998)
+model_DT <- train(classe ~., method = "rpart", data = df_model_train)
+confusionMatrix(df_model_train$classe, predict(model_DT, df_model_train))
+```
+It is not a very accurate model on the training data set. The test on validation data set is not promising too.  
+```{r}
+confusionMatrix(df_model_valid$classe, predict(model_DT, df_model_valid))
+```
+
+Second, let us use random forest.  
+```{r}
+# for speeding up the process
+library(parallel)
+library(doParallel)
+registerDoParallel()
+set.seed(997)
+model_RF <- train(classe ~., method = "rf", data = df_model_train, trControl=trainControl(classProbs = T, savePredictions = T, allowParallel = T), allowParallel = T)
+confusionMatrix(df_model_train$classe, predict(model_RF, df_model_train))
+```
+From above, it is quite clear that the random forest model over perform the decision tree. Let us see how it works on the validation data set.  
+```{r}
+confusionMatrix(df_model_valid$classe, predict(model_RF, df_model_valid))
+```
+Not bad, I am happy with the .9962 accuracy :)  
+
+# 3. Prediction  
+Having got a quite good randome forest model. It is time to put it on the testing data set and see how it works.  
+```{r}
+pred <- predict(model_RF, df_pre_test)
+pred
+```  
+
+# 4. Write the Results  
+Output the 20 predictions into 20 files.  
+```{r}
+pml_write_files <- function(x){
+  n = length(x)
+  path <- "answers/"
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=file.path(path, filename),quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(pred)
+```

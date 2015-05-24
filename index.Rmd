@@ -132,7 +132,7 @@ From above, it is quite clear that the random forest model over perform the deci
 ```{r}
 confusionMatrix(df_model_valid$classe, predict(model_RF, df_model_valid))
 ```
-Not bad, I am happy with the .9962 accuracy :)  
+Not bad, I am happy with the .9962 accuracy :), **that is less than .01 sample error!!**  
 
 # 3. Prediction  
 Having got a quite good randome forest model. It is time to put it on the testing data set and see how it works.  
